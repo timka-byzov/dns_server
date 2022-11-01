@@ -1,18 +1,46 @@
 import binascii
 import socket
+import time
 
 # '8.8.8.8'
 # '193.232.128.6' ru
 # '213.180.193.1' yandex.ru   '93.158.134.1'
-root_server_ip = '8.8.8.8'
+root_server_ip = '213.180.193.1'
 
 
 class DNSServer:
-    def nslookup(self, str_addr):
-        bin_data, addr = self.send_udp_message(self.form_dns_message(str_addr),
-                                               root_server_ip, 53)
+    def __init__(self):
+        self.root_server_ip = '198.41.0.4'
+        # self.root_server_ip = '198.97.190.53'
 
+    def iterative_request(self, str_addr, address, port=53):
+        bin_data, addr = self.send_udp_message(self.form_dns_message(str_addr),
+                                               address, port)
+
+        time.sleep(2)
         return DNSResponse(bin_data)
+
+    def nslookup(self, str_addr):
+        server_ip = self.root_server_ip
+
+        while True:
+            # try:
+            response = self.iterative_request(str_addr, server_ip)
+            # except:
+            #     return "something goes wrong"
+
+            ips = [DNSResponse.normalize_ip(record["name_server"]) for record in response.additional_records]
+
+            print(response.flags)
+
+            if response.flags[0] & 0x04:  # server is authority for domain
+                return [DNSResponse.normalize_ip(record["name_server"]) for record in response.answer_records]
+
+            else:
+                server_ip = ips[0]
+                print(server_ip)
+
+        # if response.flags[0] &
 
     def send_udp_message(self, message, address, port):
         """send_udp_message sends a message to UDP server
@@ -24,35 +52,35 @@ class DNSServer:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             sock.sendto(message, server_address)
-            bin_data, addr = sock.recvfrom(4096)
+            bin_data, addr = sock.recvfrom(8000)
         finally:
             sock.close()
         return bin_data, addr
 
     @staticmethod
     def get_dns_query(str_address):
-        if str_address == '.':
-            return bytes([0])
-
-        arr_address = str_address.split('.')
-        bin_address = bytes(0)
-
-        for sub_domen in arr_address:
-            len_in_bytes = bytes([len(sub_domen)])
-            block = len_in_bytes + bytes(sub_domen, 'utf-8')
-            bin_address += block
-
-        bin_address += bytes([0])
-
         req_type = bytes([0x00, 0x01])
         # req_type = bytes([0x00, 0x01])
         req_class = bytes([0x00, 0x01])
+
+        bin_address = bytes()
+
+        if str_address != '.':
+            arr_address = str_address.split('.')
+            bin_address = bytes(0)
+
+            for sub_domen in arr_address:
+                len_in_bytes = bytes([len(sub_domen)])
+                block = len_in_bytes + bytes(sub_domen, 'utf-8')
+                bin_address += block
+
+        bin_address += bytes([0])
 
         return bin_address + req_type + req_class
 
     def form_dns_message(self, str_address):
         id = bytearray('ba', 'utf-8')
-        flags = bytes([0x00, 0x00])
+        flags = bytes([0x01, 0x00])
         questions = bytes([0x00, 0x01])
         answer_rrs = bytes([0x00, 0x00])
         authority_rrs = bytes([0x00, 0x00])
@@ -93,6 +121,7 @@ class DNSResponse:
             return 'ref', byte_num - 1
 
         return bin_request[begin_byte:byte_num].decode('utf-8'), byte_num
+        # return 'pohuy', byte_num
 
     def parse_dns_query(self, byte_num, bin_request):
         query = dict()
@@ -138,13 +167,17 @@ class DNSResponse:
 
 
 sever = DNSServer()
-dns_response = sever.nslookup('.')
-
-ans_rrs = dns_response.answer_records
-ips = [DNSResponse.normalize_ip(ans_rr["name_server"]) for ans_rr in ans_rrs]
+# dns_response = sever.iterative_request('example.com', '198.41.0.4')
+# a = 0
+# print(dns_response.authority_records)
+#
+# ans_rrs = dns_response.answer_records
+# ips = [DNSResponse.normalize_ip(ans_rr["name_server"]) for ans_rr in ans_rrs]
+# # print(ips)
+# # print(DNSResponse.normalize_ip(ip))
+#
 # print(ips)
-# print(DNSResponse.normalize_ip(ip))
+#
+# # ns1.yandex.ru.sysadmin.yandex-team.ru
 
-print(ips)
-
-# ns1.yandex.ru.sysadmin.yandex-team.ru
+print(sever.nslookup("gosuslugi.ru"))
