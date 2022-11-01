@@ -1,11 +1,16 @@
 import binascii
 import socket
 
+# '8.8.8.8'
+# '193.232.128.6' ru
+# '213.180.193.1' yandex.ru   '93.158.134.1'
+root_server_ip = '8.8.8.8'
+
 
 class DNSServer:
     def nslookup(self, str_addr):
         bin_data, addr = self.send_udp_message(self.form_dns_message(str_addr),
-                                               "193.232.128.6", 53)
+                                               root_server_ip, 53)
 
         return DNSResponse(bin_data)
 
@@ -24,7 +29,11 @@ class DNSServer:
             sock.close()
         return bin_data, addr
 
-    def get_dns_query(self, str_address):
+    @staticmethod
+    def get_dns_query(str_address):
+        if str_address == '.':
+            return bytes([0])
+
         arr_address = str_address.split('.')
         bin_address = bytes(0)
 
@@ -35,13 +44,14 @@ class DNSServer:
 
         bin_address += bytes([0])
 
-        req_type = bytes([0x00, 0x0c])
+        req_type = bytes([0x00, 0x01])
+        # req_type = bytes([0x00, 0x01])
         req_class = bytes([0x00, 0x01])
 
         return bin_address + req_type + req_class
 
     def form_dns_message(self, str_address):
-        id = bytearray('bb', 'utf-8')
+        id = bytearray('ba', 'utf-8')
         flags = bytes([0x00, 0x00])
         questions = bytes([0x00, 0x01])
         answer_rrs = bytes([0x00, 0x00])
@@ -55,21 +65,23 @@ class DNSResponse:
     def __init__(self, bin_request):
         self.transaction_id = bin_request[0:2].decode('utf-8')
         self.flags = bin_request[2:4]
-        self.questions = bin_request[4:6]
+        self.questions = int.from_bytes(bin_request[4:6], byteorder='big')
         self.answer_records_count = int.from_bytes(bin_request[6:8], byteorder='big')
         self.authority_records_count = int.from_bytes(bin_request[8:10], byteorder='big')
         self.additional_records_count = int.from_bytes(bin_request[10:12], byteorder='big')
 
         byte_num = 12
+
         self.query, next_byte = self.parse_dns_query(byte_num, bin_request)
+
+        self.answer_records, next_byte = self.parse_records(next_byte, bin_request, self.answer_records_count)
 
         self.authority_records, next_byte = self.parse_records(next_byte, bin_request, self.authority_records_count)
 
         self.additional_records, _ = self.parse_records(next_byte, bin_request, self.additional_records_count)
 
     @staticmethod
-    def parse_dns_query(byte_num, bin_request):
-        query = dict()
+    def get_name(byte_num, bin_request):
         begin_byte = byte_num
 
         #  имя кончается на 0
@@ -77,7 +89,15 @@ class DNSResponse:
             byte_num += 1
         byte_num += 1
 
-        query['name'] = bin_request[begin_byte:byte_num].decode('utf-8')
+        if bin_request[begin_byte] > 63:  # ссылка
+            return 'ref', byte_num - 1
+
+        return bin_request[begin_byte:byte_num].decode('utf-8'), byte_num
+
+    def parse_dns_query(self, byte_num, bin_request):
+        query = dict()
+
+        query['name'], byte_num = self.get_name(byte_num, bin_request)
         query['type'] = bin_request[byte_num: byte_num + 2]
         byte_num += 2
         query['class'] = bin_request[byte_num: byte_num + 2]
@@ -85,15 +105,13 @@ class DNSResponse:
 
         return query, byte_num
 
-    @staticmethod
-    def parse_records(byte_num, bin_request, records_count):
+    def parse_records(self, byte_num, bin_request, records_count):
 
         records = []
 
         for rr_num in range(records_count):
             record = dict()
-            record['name'] = bin_request[byte_num:byte_num + 2]
-            byte_num += 2
+            record['name'], byte_num = self.get_name(byte_num, bin_request)
 
             record['type'] = bin_request[byte_num:byte_num + 2]
             byte_num += 2
@@ -120,8 +138,13 @@ class DNSResponse:
 
 
 sever = DNSServer()
-dns_response = sever.nslookup('yandex.ru')
+dns_response = sever.nslookup('.')
 
-ip = dns_response.additional_records[0]["name_server"]
+ans_rrs = dns_response.answer_records
+ips = [DNSResponse.normalize_ip(ans_rr["name_server"]) for ans_rr in ans_rrs]
+# print(ips)
+# print(DNSResponse.normalize_ip(ip))
 
-print(DNSResponse.normalize_ip(ip))
+print(ips)
+
+# ns1.yandex.ru.sysadmin.yandex-team.ru
